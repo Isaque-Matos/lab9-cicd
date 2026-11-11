@@ -1,0 +1,51 @@
+name: Pipeline API
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+
+env:
+  IMAGE_NAME: lab9-api
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Build da imagem Docker
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+
+  deploy_homologacao:
+    needs: build
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy em Homologação (porta 8080)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            docker stop api-homolog || true
+            docker rm api-homolog || true
+            docker run -d --name api-homolog -p 8080:8080 ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  deploy_producao:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy em Produção
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            docker stop api-producao || true
+            docker rm api-producao || true
+            docker run -d --name api-producao -p 80:8080 ${{ env.IMAGE_NAME }}:${{ github.sha }}
