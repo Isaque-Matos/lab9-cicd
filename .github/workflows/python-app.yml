@@ -8,15 +8,46 @@ env:
   IMAGE_NAME: lab9-api
 
 jobs:
+  # ============================================================
+  # JOB 1 — BUILD: testa, constrói a imagem e envia para o GHCR
+  # Roda em qualquer push (main ou develop)
+  # ============================================================
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
 
-      - name: Build da imagem Docker
-        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Login no GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push da imagem Docker para o GHCR
+        run: |
+          IMAGE_ID=ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          IMAGE_ID=$(echo $IMAGE_ID | tr '[A-Z]' '[a-z]')
+          echo "Imagem: $IMAGE_ID"
+          docker build -t $IMAGE_ID .
+          docker push $IMAGE_ID
+
+  # ============================================================
+  # JOB 2 — DEPLOY HOMOLOGAÇÃO: automático, só na branch develop
+  # Porta 8080
+  # ============================================================
   deploy_homologacao:
     needs: build
     if: github.ref == 'refs/heads/develop'
@@ -29,10 +60,20 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            IMAGE_ID=ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            IMAGE_ID=$(echo $IMAGE_ID | tr '[A-Z]' '[a-z]')
+
             docker stop api-homolog || true
             docker rm api-homolog || true
-            docker run -d --name api-homolog -p 8080:8080 ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            docker pull $IMAGE_ID
+            docker run -d --name api-homolog -p 8080:8080 $IMAGE_ID
 
+  # ============================================================
+  # JOB 3 — DEPLOY PRODUÇÃO: só na main + aprovação manual
+  # Porta 80 | Environment "production"
+  # ============================================================
   deploy_producao:
     needs: build
     if: github.ref == 'refs/heads/main'
@@ -46,6 +87,12 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            IMAGE_ID=ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            IMAGE_ID=$(echo $IMAGE_ID | tr '[A-Z]' '[a-z]')
+
             docker stop api-producao || true
             docker rm api-producao || true
-            docker run -d --name api-producao -p 80:8080 ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            docker pull $IMAGE_ID
+            docker run -d --name api-producao -p 80:8080 $IMAGE_ID
