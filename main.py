@@ -3,5 +3,6 @@ from fastapi import FastAPI
 app = FastAPI()
 
 @app.get("/")
-def read_root():
-    return {"status": "ok", "ambiente": "devops-producao"}
+async def root():
+    return {"status": "ok", "message": "API rodando no ambiente de homologação!"}
+
